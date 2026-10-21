@@ -1,0 +1,103 @@
+/* Design tokens — the single source of truth for app chrome.
+   Deck content is themed separately by src/lib/theme.js; these never leak in. */
+
+:root {
+  /* spacing: 4px base */
+  --s-1: 0.25rem;
+  --s-2: 0.5rem;
+  --s-3: 0.75rem;
+  --s-4: 1rem;
+  --s-5: 1.5rem;
+  --s-6: 2rem;
+
+  --radius-sm: 5px;
+  --radius: 8px;
+  --radius-lg: 12px;
+
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+
+  --text-xs: 0.69rem;
+  --text-sm: 0.78rem;
+  --text-base: 0.85rem;
+  --text-lg: 1rem;
+
+  --speed: 0.14s;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  --chrome-density: 1;
+  --row-h: calc(1.9rem * var(--chrome-density));
+  --bar-h: calc(2.5rem * var(--chrome-density));
+}
+
+/* ---- dark (default) ---- */
+
+:root,
+[data-ui-theme='dark'] {
+  --bg: #080b12;
+  --surface: #0d1320;
+  --surface-2: #121a2a;
+  --surface-3: #192235;
+  --border: #1d2739;
+  --border-2: #2a3850;
+
+  --fg: #e7edf9;
+  --fg-dim: #94a3bd;
+  --fg-faint: #5d6b85;
+
+  --accent: #6d8dff;
+  --accent-hover: #86a0ff;
+  --accent-contrast: #ffffff;
+  --accent-soft: rgba(109, 141, 255, 0.14);
+
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --danger: #f87171;
+
+  --shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
+  --overlay: rgba(4, 7, 13, 0.72);
+}
+
+/* ---- light ---- */
+
+[data-ui-theme='light'] {
+  --bg: #f4f6fa;
+  --surface: #ffffff;
+  --surface-2: #f7f9fc;
+  --surface-3: #eef2f8;
+  --border: #dde4ee;
+  --border-2: #c6d2e3;
+
+  --fg: #11182a;
+  --fg-dim: #566179;
+  --fg-faint: #8794a9;
+
+  --accent: #3b62f6;
+  --accent-hover: #2b4fe0;
+  --accent-contrast: #ffffff;
+  --accent-soft: rgba(59, 98, 246, 0.1);
+
+  --ok: #159b54;
+  --warn: #b45309;
+  --danger: #d4342c;
+
+  --shadow: 0 10px 30px rgba(18, 32, 63, 0.12);
+  --overlay: rgba(244, 246, 250, 0.75);
+}
+
+/* ---- accent overrides, set from the UI ---- */
+
+[data-accent='indigo'] { --accent: #6d8dff; --accent-hover: #86a0ff; --accent-soft: rgba(109,141,255,.14); }
+[data-accent='emerald'] { --accent: #34d399; --accent-hover: #4ade80; --accent-soft: rgba(52,211,153,.14); }
+[data-accent='amber']   { --accent: #f59e0b; --accent-hover: #fbbf24; --accent-soft: rgba(245,158,11,.14); }
+[data-accent='rose']    { --accent: #fb7185; --accent-hover: #fda4af; --accent-soft: rgba(251,113,133,.14); }
+[data-accent='cyan']    { --accent: #22d3ee; --accent-hover: #67e8f9; --accent-soft: rgba(34,211,238,.14); }
+[data-accent='violet']  { --accent: #a78bfa; --accent-hover: #c4b5fd; --accent-soft: rgba(167,139,250,.14); }
+
+[data-density='compact'] { --chrome-density: 0.86; }
+[data-density='cozy']    { --chrome-density: 1; }
+[data-density='roomy']   { --chrome-density: 1.18; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
