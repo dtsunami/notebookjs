@@ -25,6 +25,10 @@ export default function SettingsDrawer({
   onPromptChange,
   kernel,
   onRestartKernel,
+  languages,
+  languagesError,
+  onRefreshLanguages,
+  onOpenInstallDeck,
   playwright,
   serverRoot,
   onExportHtml,
@@ -40,6 +44,12 @@ export default function SettingsDrawer({
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   }, [open, onClose]);
+
+  // Re-probe whenever the Kernel tab is opened: an interpreter installed in a
+  // shell cell a minute ago should show as available without a reload.
+  useEffect(() => {
+    if (open && tab === 'kernel') onRefreshLanguages?.();
+  }, [open, tab, onRefreshLanguages]);
 
   if (!open) return null;
 
@@ -111,6 +121,45 @@ export default function SettingsDrawer({
               </section>
 
               <section className="panel-section">
+                <h4>Backends</h4>
+                {languagesError && <p className="panel-hint danger">{languagesError}</p>}
+                {!languages && !languagesError && (
+                  <p className="panel-hint">Checking which interpreters resolve…</p>
+                )}
+                {languages && (
+                  <ul className="lang-list">
+                    {languages.languages.map((l) => (
+                      <li key={l.id} className={l.ok ? 'lang-row ok' : 'lang-row miss'}>
+                        <span className="lang-dot" aria-hidden="true" />
+                        <span className="lang-name">{l.label}</span>
+                        <code className="lang-cmd" title={l.cmd || l.error || ''}>
+                          {l.ok ? l.cmd : l.error || 'not found'}
+                        </code>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="panel-hint">
+                  JavaScript and TypeScript run on the app&rsquo;s own Node. Python, Ruby and the
+                  shells are separate interpreters; installed backends live in{' '}
+                  <code>{languages?.binDir || '~/.labjs/bin'}</code> and are found without a
+                  restart.
+                </p>
+                <div className="panel-actions tight wrap">
+                  <button type="button" className="ghost" onClick={onRefreshLanguages}>
+                    Re-check
+                  </button>
+                  <button type="button" className="primary" onClick={onOpenInstallDeck}>
+                    Open install deck
+                  </button>
+                </div>
+                <p className="panel-hint">
+                  The install deck has runnable shell cells for macOS, Linux and Windows.
+                  Nothing in it runs until you press Run.
+                </p>
+              </section>
+
+              <section className="panel-section">
                 <h4>Environment</h4>
                 <dl className="kv">
                   <dt>Server root</dt>
@@ -119,7 +168,8 @@ export default function SettingsDrawer({
                   <dd>{playwright === false ? 'Playwright not installed' : 'available'}</dd>
                 </dl>
                 <p className="panel-hint">
-                  Set <code>NB_PYTHON</code> to a venv interpreter to enable Python cells.
+                  Set <code>NB_PYTHON</code> or <code>NB_RUBY</code> to override the interpreter a
+                  kernel uses.
                 </p>
               </section>
             </div>

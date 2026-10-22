@@ -76,6 +76,15 @@ export async function writeSession(id, messages) {
   return true;
 }
 
+export async function deleteSession(id) {
+  await ensureDirs();
+  if (!isSafeId(id)) throw new Error('Invalid session id.');
+  const file = path.join(SESSIONS_DIR, `${id}.json`);
+  if (!existsSync(file)) return false;
+  await unlink(file);
+  return true;
+}
+
 export async function readSession(id) {
   await ensureDirs();
   if (!isSafeId(id)) return null;

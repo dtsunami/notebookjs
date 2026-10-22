@@ -47,6 +47,32 @@ export function findSlides(html) {
 }
 
 /**
+ * Appends an empty slide after the last one, inside the deck container.
+ * The new slide gets a fresh id so the outline and the assistant can address
+ * it immediately. Returns null when no slide can be found to anchor to.
+ */
+export function appendSlide(html, { title = 'New slide', body = 'Add content here.' } = {}) {
+  if (!html) return null;
+
+  const slides = findSlides(html);
+  const used = new Set(slides.map((s) => s.id).filter(Boolean));
+  let n = 1;
+  while (used.has(`s${n}`)) n += 1;
+
+  const slide = `<section class="slide" data-slide-id="s${n}">\n  <h2>${title}</h2>\n  <p>${body}</p>\n</section>`;
+
+  if (slides.length > 0) {
+    const last = slides[slides.length - 1];
+    return `${html.slice(0, last.end)}\n${slide}${html.slice(last.end)}`;
+  }
+
+  // No slides at all: insert before </body>, or append as a last resort.
+  const bodyClose = html.search(/<\/body>/i);
+  if (bodyClose !== -1) return `${html.slice(0, bodyClose)}${slide}\n${html.slice(bodyClose)}`;
+  return `${html}\n${slide}`;
+}
+
+/**
  * Moves one slide relative to another, preserving both exactly.
  * Returns null if either id is missing.
  */

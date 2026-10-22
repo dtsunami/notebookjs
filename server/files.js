@@ -130,10 +130,14 @@ export const EMPTY_NOTEBOOK = (name) => ({
   messages: [],
 });
 
+const CREATE_EXT = { notebook: '.jsnb', code: '.js', text: '.md', html: '.html' };
+
 export async function create(relPath, name, kind = 'notebook') {
   const dir = resolveSafe(relPath);
   let finalName = validName(name);
-  if (kind === 'notebook' && !finalName.endsWith('.jsnb')) finalName += '.jsnb';
+  if (!/\.[a-z0-9]{1,8}$/i.test(finalName)) {
+    finalName += CREATE_EXT[kind] || CREATE_EXT.notebook;
+  }
 
   const target = path.join(dir, finalName);
   resolveSafe(toRel(target));

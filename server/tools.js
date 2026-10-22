@@ -123,7 +123,7 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: 'list_cells',
       description:
-        'List every JavaScript cell with its id, the slide it belongs to, and a preview of its source.',
+        'List every cell with its id, language, the slide it belongs to, and a preview of its source.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },
@@ -145,7 +145,7 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: 'create_cell',
       description:
-        'Add a notebook cell to a slide. The id is assigned for you and returned. Creating a cell does not run it: only the human executes cells, and you have no tool that can. Never hand-write a <script type="text/nb-cell"> tag.',
+        'Add a notebook cell to a slide, at a position you choose. The id is assigned for you and returned. Creating a cell does not run it: only the human executes cells, and you have no tool that can. Pass `box` to place it (see list_cells for where existing cells sit); omit it and the cell lands at a default position that may overlap other content. Never hand-write a <script type="text/nb-cell"> tag.',
       parameters: {
         type: 'object',
         properties: {
@@ -155,7 +155,26 @@ export const TOOL_DEFINITIONS = [
           },
           source: {
             type: 'string',
-            description: 'JavaScript body. Runs as a function receiving `cell`.',
+            description:
+              'Cell source. For javascript it runs as a function receiving `cell`; for other languages it is the plain program body.',
+          },
+          lang: {
+            type: 'string',
+            enum: ['javascript', 'typescript', 'python', 'ruby'],
+            description: 'Kernel language. Defaults to javascript.',
+          },
+          box: {
+            type: 'object',
+            description:
+              'Where the cell sits on the slide, in percent of the slide (0-100). Omit for the default placement. Give all four or none. A cell under a heading would be x=6, y=34, w=88, h=48; a full-width footer x=6, y=84, w=88, h=13. Leave room for the heading above and keep within 6-94.',
+            properties: {
+              x: { type: 'number', description: 'Left edge, percent.' },
+              y: { type: 'number', description: 'Top edge, percent.' },
+              w: { type: 'number', description: 'Width, percent.' },
+              h: { type: 'number', description: 'Height, percent.' },
+            },
+            required: ['x', 'y', 'w', 'h'],
+            additionalProperties: false,
           },
         },
         required: ['source'],
@@ -168,10 +187,26 @@ export const TOOL_DEFINITIONS = [
     function: {
       name: 'update_cell',
       description:
-        'Replace the entire source of an existing cell. Call read_cell first if you need to preserve part of it. Does not run the cell.',
+        'Replace the entire source of an existing cell, and optionally move it. Call read_cell first if you need to preserve part of it. Does not run the cell.',
       parameters: {
         type: 'object',
-        properties: { id: { type: 'string' }, source: { type: 'string' } },
+        properties: {
+          id: { type: 'string' },
+          source: { type: 'string' },
+          box: {
+            type: 'object',
+            description:
+              'New placement in percent of the slide. Omit to leave the cell where it is.',
+            properties: {
+              x: { type: 'number' },
+              y: { type: 'number' },
+              w: { type: 'number' },
+              h: { type: 'number' },
+            },
+            required: ['x', 'y', 'w', 'h'],
+            additionalProperties: false,
+          },
+        },
         required: ['id', 'source'],
         additionalProperties: false,
       },
@@ -318,12 +353,19 @@ export async function executeTool(name, args, html) {
 
     case 'list_cells': {
       const list = cells.listCells(html);
+      // Geometry is printed because placement is how a cell is laid out on the
+      // slide; two cells at the same x/y are on top of each other, and that is
+      // the most common layout mistake to catch.
+      const where = (b) => (b ? `x${b.x} y${b.y} w${b.w} h${b.h}` : 'flow');
       return {
         text: list.length
           ? list
-              .map((c) => `${c.id} (slide ${c.slideId}, ${c.chars} chars): ${c.preview}`)
+              .map(
+                (c) =>
+                  `${c.id} (slide ${c.slideId}, ${c.lang}, ${where(c.box)}, ${c.chars} chars): ${c.preview}`,
+              )
               .join('\n')
-          : 'The deck has no JavaScript cells yet.',
+          : 'The deck has no cells yet.',
       };
     }
 
@@ -334,16 +376,19 @@ export async function executeTool(name, args, html) {
     }
 
     case 'create_cell': {
-      const r = cells.createCell(html, { slideId: a.slideId, source: a.source });
+      const r = cells.createCell(html, { slideId: a.slideId, source: a.source, lang: a.lang, box: a.box });
       if (r.error) return { text: r.error };
+      const where = a.box
+        ? ` at ${a.box.x}%,${a.box.y}% (${a.box.w}%x${a.box.h}%)`
+        : ' at the default position';
       return {
         html: r.html,
-        text: `Created cell ${r.id} in slide ${r.slideId || '(end of document)'}.`,
+        text: `Created ${r.lang} cell ${r.id} in slide ${r.slideId || '(end of document)'}${where}. It has not run.`,
       };
     }
 
     case 'update_cell': {
-      const r = cells.updateCell(html, { id: a.id }, a.source);
+      const r = cells.updateCell(html, { id: a.id, box: a.box }, a.source);
       if (r.error) return { text: r.error };
       return { html: r.html, text: `Updated cell ${r.id}.` };
     }

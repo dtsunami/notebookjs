@@ -1,5 +1,10 @@
 import vm from 'node:vm';
 import readline from 'node:readline';
+import { stripTypeScriptTypes } from 'node:module';
+
+// Two modes share this harness. The protocol is identical; only the source
+// transform differs, so JavaScript and TypeScript kernels cannot drift apart.
+const TYPESCRIPT = process.argv.includes('--typescript');
 
 let entries = [];
 let queue = Promise.resolve();
@@ -54,10 +59,21 @@ const context = vm.createContext(sandbox);
 context.globalThis = context;
 context.global = context;
 
-async function exec(code) {
+async function exec(rawCode) {
   entries = [];
   const started = Date.now();
   const finish = (ok) => ({ ok, entries, ms: Date.now() - started });
+
+  let code = rawCode;
+  if (TYPESCRIPT) {
+    try {
+      // 'strip' erases annotations and leaves runtime semantics untouched.
+      code = stripTypeScriptTypes(code, { mode: 'strip' });
+    } catch (err) {
+      entries.push({ level: 'error', text: String(err && err.message ? err.message : err) });
+      return finish(false);
+    }
+  }
 
   try {
     let value = vm.runInContext(code, context, { displayErrors: true, filename: 'cell.js' });
@@ -124,4 +140,4 @@ rl.on('line', (line) => {
   });
 });
 
-write({ type: 'ready', lang: 'javascript' });
+write({ type: 'ready', lang: TYPESCRIPT ? 'typescript' : 'javascript' });

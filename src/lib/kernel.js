@@ -23,8 +23,35 @@ export function restartKernel({ deckId, lang = 'javascript' }) {
   });
 }
 
+export function interruptKernel({ deckId, lang = 'javascript' }) {
+  return request('/api/kernel/interrupt', {
+    method: 'POST',
+    body: JSON.stringify({ deckId, lang }),
+  });
+}
+
 export function kernelStatus() {
   return request('/api/kernel/status');
+}
+
+/** Which interpreters resolve on this machine, and where installed ones go. */
+export function kernelLanguages() {
+  return request('/api/kernel/languages');
+}
+
+export function fetchInstallDeck() {
+  return request('/api/deck/install');
+}
+
+/**
+ * Ask the assistant to rewrite one cell's source in another language. Returns
+ * `{ok, source, notes}` or `{ok: false, error}`. Never edits the deck.
+ */
+export function convertCell({ source, from, to }) {
+  return request('/api/convert', {
+    method: 'POST',
+    body: JSON.stringify({ source, from, to }),
+  });
 }
 
 export function kernelForDeck(status, deckId) {

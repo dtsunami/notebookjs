@@ -5,6 +5,8 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { runAgent, loadSystemPrompt, newDeck } from './agent.js';
+import { installDeck } from './templates/install.js';
+import { convertSource } from './convert.js';
 import * as store from './store.js';
 import { shutdown, isAvailable, screenshot } from './browser.js';
 import { applyTheme, stripTheme } from '../src/lib/theme.js';
@@ -67,6 +69,15 @@ app.get('/api/prompt', async (req, res) => {
   res.json({ prompt: await loadSystemPrompt() });
 });
 
+/**
+ * The provisioning deck. Opening it is an explicit action from Settings, not
+ * something the assistant can create: it runs installers, and that is the
+ * operator's decision to make with a click.
+ */
+app.get('/api/deck/install', (req, res) => {
+  res.json({ html: installDeck(), name: 'Install kernels' });
+});
+
 app.get('/api/deck/new', (req, res) => {
   res.json({ html: newDeck() });
 });
@@ -115,6 +126,116 @@ app.get('/api/sessions/:id', async (req, res) => {
   const session = await store.readSession(req.params.id);
   if (!session) return res.status(404).json({ error: 'Session not found.' });
   res.json(session);
+});
+
+/**
+ * Streaming chat. Same work as /api/chat, but the operator sees the model think
+ * and the tools run instead of a three-dot bubble for a minute.
+ *
+ * Server-sent events, one JSON object per event:
+ *   {type:'reasoning', text}      thinking tokens, as they arrive
+ *   {type:'content-start'}        thinking ended, the answer begins
+ *   {type:'content', text}        answer tokens
+ *   {type:'step', step}           a new model turn in the tool loop
+ *   {type:'tool', name, target}   a tool call started
+ *   {type:'tool-done', name}      it finished
+ *   {type:'done', ...result}      html/text/steps/model/reasoning
+ *   {type:'error', error}
+ *
+ * `X-Accel-Buffering: no` stops a reverse proxy from collecting the stream
+ * into one chunk, which would defeat the whole point.
+ */
+app.post('/api/chat/stream', async (req, res) => {
+  const { html, history, message, systemPrompt, styleSettings, sessionId, focus } = req.body || {};
+  if (typeof message !== 'string' || !message.trim()) {
+    return res.status(400).json({ error: 'message is required.' });
+  }
+  if (typeof html !== 'string') {
+    return res.status(400).json({ error: 'html is required.' });
+  }
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+
+  let closed = false;
+  const send = (obj) => {
+    if (closed) return;
+    try {
+      res.write(`data: ${JSON.stringify(obj)}\n\n`);
+    } catch {
+      closed = true;
+    }
+  };
+
+  // The browser aborting must cancel the model call, not leave it running.
+  const controller = new AbortController();
+  req.on('close', () => {
+    closed = true;
+    controller.abort();
+  });
+
+  // A comment every 15s keeps intermediaries from timing the stream out during
+  // a long think, when no real event is produced.
+  const keepAlive = setInterval(() => {
+    if (!closed) {
+      try {
+        res.write(': keep-alive\n\n');
+      } catch {
+        closed = true;
+      }
+    }
+  }, 15000);
+
+  try {
+    const prompt = systemPrompt && systemPrompt.trim() ? systemPrompt : await loadSystemPrompt();
+    const themed = injectRuntime(applyTheme(html, styleSettings));
+    const started = Date.now();
+    const result = await runAgent({
+      html: themed,
+      history: Array.isArray(history) ? history : [],
+      userMessage: message,
+      systemPrompt: prompt,
+      styleSettings,
+      focus: focus && typeof focus === 'object' ? focus : null,
+      signal: controller.signal,
+      onEvent: send,
+    });
+    result.html = stripTheme(stripRuntime(result.html));
+    result.elapsedMs = Date.now() - started;
+
+    if (sessionId && store.isSafeId(sessionId)) {
+      const transcript = [
+        ...(Array.isArray(history) ? history : []),
+        { role: 'user', content: message },
+        { role: 'assistant', content: result.text },
+      ];
+      await store.writeSession(sessionId, transcript).catch(() => {});
+    }
+
+    send({ type: 'done', ...result });
+  } catch (err) {
+    if (err.name !== 'AbortError') send({ type: 'error', error: err.message });
+  } finally {
+    clearInterval(keepAlive);
+    closed = true;
+    try {
+      res.end();
+    } catch {
+      /* already gone */
+    }
+  }
+});
+
+app.delete('/api/sessions/:id', async (req, res) => {
+  try {
+    res.json({ ok: await store.deleteSession(req.params.id) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.post('/api/chat', async (req, res) => {
@@ -236,6 +357,19 @@ app.get('/api/kernel/status', (req, res) => {
   res.json({ supported: kernel.SUPPORTED, live: kernel.status() });
 });
 
+/**
+ * Which interpreters resolve on this machine, and where installed backends go.
+ * Probed at request time so installing a backend shows up on refresh without a
+ * server restart.
+ */
+app.get('/api/kernel/languages', (req, res) => {
+  try {
+    res.json({ binDir: kernel.BIN_DIR, languages: kernel.probeLanguages() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/kernel/exec', async (req, res) => {
   const { deckId, lang, code } = req.body || {};
   if (typeof code !== 'string') {
@@ -251,11 +385,40 @@ app.post('/api/kernel/exec', async (req, res) => {
   }
 });
 
+/**
+ * Convert one cell's source to another kernel language. One-shot: the model
+ * returns code, the client confirms, and the client applies it. This endpoint
+ * never touches the deck.
+ */
+app.post('/api/convert', async (req, res) => {
+  const { source, from, to } = req.body || {};
+  if (typeof source !== 'string' || !from || !to) {
+    return res.status(400).json({ error: 'source, from and to are required.' });
+  }
+  if (from === to) {
+    return res.json({ ok: true, source, notes: 'Same language; nothing to convert.' });
+  }
+  try {
+    res.json(await convertSource({ source, from, to }));
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 app.post('/api/kernel/restart', async (req, res) => {
   const { deckId, lang } = req.body || {};
   try {
     await kernel.restart({ deckId, lang: lang || 'javascript' });
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/kernel/interrupt', async (req, res) => {
+  const { deckId, lang } = req.body || {};
+  try {
+    res.json(await kernel.interrupt({ deckId, lang: lang || 'javascript' }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

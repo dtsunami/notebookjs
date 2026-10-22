@@ -9,7 +9,14 @@ const ICON = {
   file: '·',
 };
 
-export default function FileTree({ openPath, onOpen, onError, onCreated }) {
+export default function FileTree({
+  openPath,
+  onOpen,
+  onError,
+  onCreated,
+  onCwdChange,
+  refreshKey = 0,
+}) {
   const [cwd, setCwd] = useState('');
   const [entries, setEntries] = useState([]);
   const [root, setRoot] = useState('');
@@ -25,19 +32,27 @@ export default function FileTree({ openPath, onOpen, onError, onCreated }) {
         setEntries(data.entries);
         setRoot(data.root);
         setCwd(data.path);
+        onCwdChange?.(data.path);
       } catch (err) {
         onError?.(err.message);
       } finally {
         setBusy(false);
       }
     },
-    [cwd, onError],
+    [cwd, onError, onCwdChange],
   );
 
   useEffect(() => {
     refresh('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // A save or a create elsewhere in the app changed the directory; re-list in
+  // place rather than remounting the tree and losing the browsed folder.
+  useEffect(() => {
+    if (refreshKey) refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey]);
 
   const submitPrompt = async (e) => {
     e.preventDefault();

@@ -20,11 +20,12 @@ export function slugify(name) {
   );
 }
 
-const RUNTIME_RE = /<script\s+id\s*=\s*["']nb-runtime["'][^>]*>[\s\S]*?<\/script>/i;
+import { stripRuntime } from './runtime.js';
+
 const FOCUS_RE = /<style\s+id\s*=\s*["']__nb_focus["'][^>]*>[\s\S]*?<\/style>/i;
 
 export function stripPreviewArtifacts(html) {
-  return html.replace(RUNTIME_RE, '').replace(FOCUS_RE, '').replace(/\n{3,}/g, '\n\n');
+  return stripRuntime(html).replace(FOCUS_RE, '').replace(/\n{3,}/g, '\n\n');
 }
 
 export function exportHtml({ html, name, withRuntime = true, runtimeScript = '' }) {

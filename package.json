@@ -12,13 +12,16 @@
     "dev": "concurrently -n api,web -c cyan,magenta \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "node --watch server/index.js",
     "dev:web": "vite",
-    "build": "vite build",
+    "build": "node scripts/build-cm.mjs && vite build",
+    "build:cm": "node scripts/build-cm.mjs",
     "preview": "vite preview",
     "playwright:install": "playwright install chromium"
   },
   "dependencies": {
     "@codemirror/lang-html": "^6.4.9",
+    "@lezer/highlight": "^1.2.5",
     "@codemirror/lang-javascript": "^6.2.2",
+    "@codemirror/legacy-modes": "^6.5.5",
     "@codemirror/theme-one-dark": "^6.1.2",
     "@uiw/react-codemirror": "^4.23.7",
     "cors": "^2.8.5",

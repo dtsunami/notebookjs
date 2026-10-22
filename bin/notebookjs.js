@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -18,6 +18,8 @@ Usage
 
 Serve options
   --host <addr>     bind address            (default 127.0.0.1)
+
+  url               open the last sign-in URL (reconnect, no typing)
   --port <n>        API + UI port           (default 3001)
   --data <dir>      decks and sessions      (default <cwd>/.labjs)
   --no-open         do not launch a browser
@@ -154,6 +156,31 @@ async function create(name, opts) {
   console.log(`Created ${rel.startsWith('..') ? file : rel}`);
 }
 
+/**
+ * Reconnect: print (and unless --no-open, open) the sign-in URL this machine
+ * last served. The token in it is exchanged for a cookie and stripped from the
+ * address bar, so this is safe to leave lying around at 0600 — it is no worse
+ * than the token file itself, and it is the difference between one command and
+ * hunting for a token to paste.
+ */
+async function openUrl(opts) {
+  const { CONFIG_DIR } = await import('../server/paths.js');
+  const file = path.join(CONFIG_DIR, 'url');
+  if (!existsSync(file)) {
+    console.error('No sign-in URL recorded yet. Run `nb serve` once, then try again.');
+    process.exitCode = 1;
+    return;
+  }
+  const url = (await readFile(file, 'utf8')).trim();
+  if (!url) {
+    console.error(`${file} is empty. Run \`nb serve\` to record a new one.`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(url);
+  if (!opts['no-open']) openBrowser(url);
+}
+
 async function serve(opts) {
   const host = opts.host || process.env.HOST || '127.0.0.1';
   const port = String(opts.port || process.env.PORT || 3001);
@@ -185,7 +212,21 @@ async function serve(opts) {
   const shown = host === '0.0.0.0' || host === '::' ? 'localhost' : host;
   const base = `http://${shown}:${port}`;
   const url = `${base}/?token=${encodeURIComponent(token)}`;
+
+  // Keep the sign-in URL on disk so reconnecting needs no keystrokes: `nb url`
+  // prints and opens it. It is written with 0600 because it carries the token.
+  const { CONFIG_DIR } = await import('../server/paths.js');
+  try {
+    await mkdir(CONFIG_DIR, { recursive: true });
+    const urlFile = path.join(CONFIG_DIR, 'url');
+    await writeFile(urlFile, `${url}\n`, { mode: 0o600 });
+    await chmod(urlFile, 0o600).catch(() => {});
+  } catch {
+    /* a read-only config dir must not stop the server from starting */
+  }
+
   console.log(`\n  Open the UI and sign in:\n  ${url}\n`);
+  console.log('  To reconnect later (no typing):  nb url\n');
   if (!opts['no-open']) openBrowser(url);
 }
 
@@ -201,6 +242,9 @@ switch (command) {
   case 'serve':
   case 'start':
     await serve(opts);
+    break;
+  case 'url':
+    await openUrl(opts);
     break;
   case 'list':
   case 'ls':

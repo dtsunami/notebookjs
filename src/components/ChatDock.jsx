@@ -8,8 +8,10 @@ export default function ChatDock({
   outline,
   onSend,
   busy,
+  live,
+  stats,
   onCancel,
-  onClear,
+  onReset,
 }) {
   const unread = !open && messages.length > 0;
 
@@ -20,10 +22,10 @@ export default function ChatDock({
         className="chatdock-tab"
         onClick={onToggle}
         aria-expanded={open}
-        title={open ? 'Hide assistant' : 'Show assistant'}
+        title={open ? 'Hide the agent' : 'Show the agent'}
       >
         <span className="chatdock-icon">✦</span>
-        <span className="chatdock-label">Assistant</span>
+        <span className="chatdock-label">Agent</span>
         {busy && <span className="chatdock-pulse" />}
         {unread && !busy && <span className="chatdock-count">{messages.length}</span>}
         <span className="chatdock-chevron">{open ? '▾' : '▴'}</span>
@@ -36,8 +38,10 @@ export default function ChatDock({
             outline={outline}
             onSend={onSend}
             busy={busy}
+            live={live}
+            stats={stats}
             onCancel={onCancel}
-            onClear={onClear}
+            onReset={onReset}
           />
         </div>
       )}

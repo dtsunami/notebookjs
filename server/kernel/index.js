@@ -1,72 +1,55 @@
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
 import readline from 'node:readline';
+import { LANGUAGES, SUPPORTED, BIN_DIR, probeLanguages } from './languages.js';
 
-const here = path.dirname(fileURLToPath(import.meta.url));
+export { SUPPORTED, BIN_DIR, probeLanguages };
 
 /**
- * One harness per language. A kernel is a long-lived child process that keeps
- * its own interpreter state, so variables survive between cells — the same
- * model Jupyter uses. Adding Python is a new entry here, not a rewrite.
+ * Targets live in ./languages.js so adding one is a config entry plus a
+ * harness. A kernel is a long-lived child process, so variables survive
+ * between cells — the same model Jupyter uses.
  */
-function pythonBinary() {
-  const candidates = [
-    process.env.NB_PYTHON,
-    path.join(here, '..', '..', '.venv', 'bin', 'python3'),
-    path.join(here, '..', '..', 'venv', 'bin', 'python3'),
-  ].filter(Boolean);
-  for (const c of candidates) {
-    if (c === process.env.NB_PYTHON) return c;
-    if (existsSync(c)) return c;
-  }
-  return process.env.NB_PYTHON || 'python3';
-}
-
-const RUNTIMES = {
-  javascript: () => ({
-    cmd: process.execPath,
-    args: [path.join(here, 'harness-node.mjs')],
-  }),
-  python: () => ({
-    cmd: pythonBinary(),
-    args: ['-u', path.join(here, 'harness-python.py')],
-  }),
-};
-
-export const SUPPORTED = Object.keys(RUNTIMES);
 
 const IDLE_MS = Number(process.env.KERNEL_IDLE_MS || 10 * 60 * 1000);
 const READY_TIMEOUT_MS = 8000;
 const EXEC_TIMEOUT_MS = Number(process.env.KERNEL_EXEC_TIMEOUT_MS || 30000);
+
+/**
+ * A language may carry its own budget. A shell command that installs software
+ * routinely outlives the default, and killing it halfway leaves a package
+ * manager's state inconsistent, so shells ask for minutes rather than seconds.
+ */
+function budgetFor(lang) {
+  const own = LANGUAGES[lang]?.timeoutMs;
+  return Number.isFinite(own) && own > 0 ? own : EXEC_TIMEOUT_MS;
+}
 
 const live = new Map();
 
 const keyOf = (deckId, lang) => `${deckId || 'scratch'}::${lang}`;
 
 function startKernel(deckId, lang) {
-  const make = RUNTIMES[lang];
-  if (!make) {
+  const language = LANGUAGES[lang];
+  if (!language) {
     return Promise.reject(
       new Error(`No runtime for "${lang}". Available: ${SUPPORTED.join(', ')}.`),
     );
   }
 
-  if (lang === 'python') {
-    const bin = pythonBinary();
-    const isPath = bin.includes('/');
-    if (isPath && !existsSync(bin)) {
-      return Promise.reject(
-        new Error(
-          `Python interpreter not found at ${bin}. Set NB_PYTHON to your venv's python3, e.g. NB_PYTHON=./venv/bin/python3`,
-        ),
-      );
-    }
+  let cmd;
+  let args;
+  let extraEnv;
+  try {
+    ({ cmd, args, env: extraEnv } = language.harness());
+  } catch (err) {
+    return Promise.reject(err);
   }
-
-  const { cmd, args } = make();
-  const proc = spawn(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'], env: process.env });
+  // A harness may name the binary it drives (a shell, an interpreter) through
+  // the environment rather than as argv[0], which is Node for those harnesses.
+  const proc = spawn(cmd, args, {
+    stdio: ['pipe', 'pipe', 'pipe'],
+    env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
+  });
 
   const entry = {
     deckId,
@@ -162,12 +145,23 @@ export async function exec({ deckId, lang = 'javascript', code }) {
 
   const id = ++entry.seq;
   const payload = JSON.stringify({ type: 'exec', id, code: String(code ?? '') });
+  const limit = budgetFor(lang);
 
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       entry.pending.delete(id);
-      reject(new Error(`Cell exceeded ${EXEC_TIMEOUT_MS}ms.`));
-    }, EXEC_TIMEOUT_MS);
+      // The harness never got its terminator, so this kernel can no longer tell
+      // where the abandoned cell ended. Kill it rather than risk feeding the
+      // next cell into the middle of the last one.
+      entry.dead = true;
+      live.delete(keyOf(deckId, lang));
+      try {
+        entry.proc.kill('SIGKILL');
+      } catch {
+        /* already gone */
+      }
+      reject(new Error(`Cell exceeded ${Math.round(limit / 1000)}s. The ${lang} kernel was restarted.`));
+    }, limit);
 
     entry.pending.set(id, {
       resolve: (value) => {
@@ -205,6 +199,35 @@ export async function restart({ deckId, lang = 'javascript' }) {
   return { ok: true };
 }
 
+/**
+ * Stop a running cell. A synchronous JavaScript loop inside the vm cannot be
+ * preempted, and Python has no portable signal-free way to unwind mid-cell, so
+ * interrupt means "kill the process". Kernel state is lost — the caller must
+ * say so, the same way Jupyter's "restart kernel" does.
+ */
+export async function interrupt({ deckId, lang = 'javascript' }) {
+  const key = keyOf(deckId, lang);
+  const entry = live.get(key);
+  if (!entry) return { ok: true, interrupted: false, cleared: false };
+
+  entry.dead = true;
+  live.delete(key);
+  for (const [, waiter] of entry.pending) {
+    try {
+      waiter.reject(new Error('Interrupted.'));
+    } catch {
+      /* the promise is already settled */
+    }
+  }
+  entry.pending.clear();
+  try {
+    entry.proc.kill('SIGKILL');
+  } catch {
+    /* already gone */
+  }
+  return { ok: true, interrupted: true, cleared: true };
+}
+
 export function status() {
   return Array.from(live.values())
     .filter((e) => !e.dead)
@@ -214,6 +237,7 @@ export function status() {
       idleMs: Date.now() - e.lastUsed,
       pending: e.pending.size,
       seq: e.seq,
+      label: LANGUAGES[e.lang]?.label || e.lang,
     }));
 }
 

@@ -71,7 +71,7 @@ try {
   );
 
   const unsupported = await kernel
-    .exec({ deckId: DECK, lang: 'ruby', code: 'puts 1' })
+    .exec({ deckId: DECK, lang: 'cobol', code: 'DISPLAY 1' })
     .then(() => null)
     .catch((e) => e.message);
   check(
@@ -79,6 +79,32 @@ try {
     !!unsupported && /No runtime/.test(unsupported),
     unsupported,
   );
+
+  check(
+    'registry advertises its targets',
+    ['javascript', 'typescript', 'python', 'ruby'].every((l) => kernel.SUPPORTED.includes(l)),
+    kernel.SUPPORTED.join(', '),
+  );
+
+  const ts = await kernel
+    .exec({ deckId: `${DECK}-ts`, lang: 'typescript', code: 'const n: number = 20; n + 22' })
+    .catch((e) => ({ error: e.message }));
+  if (ts.error) {
+    console.log(`skip typescript (${ts.error.split('.')[0]})`);
+  } else {
+    check('typescript strips types and runs', lastReturn(ts) === '42', JSON.stringify(ts.entries));
+
+    const tsError = await kernel.exec({
+      deckId: `${DECK}-ts`,
+      lang: 'typescript',
+      code: 'const bad: = 1;',
+    });
+    check(
+      'typescript syntax errors are reported, not fatal',
+      !tsError.ok && (tsError.entries || []).some((e) => e.level === 'error'),
+      JSON.stringify(tsError.entries),
+    );
+  }
 
   const before = kernel.status().length;
   await kernel.restart({ deckId: DECK, lang: 'javascript' });
@@ -136,6 +162,58 @@ try {
       'python kernel survives an error',
       (pySurvives.entries || []).some((e) => e.level === 'return' && e.text === '43'),
       JSON.stringify(pySurvives.entries),
+    );
+  }
+} finally {
+  await kernel.killAll();
+}
+
+// --- Ruby, skipped cleanly when no interpreter is present ---
+
+try {
+  const rb = await kernel
+    .exec({ deckId: `${DECK}-rb`, lang: 'ruby', code: 'x = 6 * 7' })
+    .catch((e) => ({ error: e.message }));
+
+  if (rb.error) {
+    console.log(`skip ruby (${rb.error.split('.')[0]})`);
+  } else {
+    check('ruby cell runs', rb.ok, JSON.stringify(rb.entries));
+
+    const reads = await kernel.exec({ deckId: `${DECK}-rb`, lang: 'ruby', code: 'x' });
+    check(
+      'ruby state persists between cells',
+      lastReturn(reads) === '42',
+      JSON.stringify(reads.entries),
+    );
+
+    const printed = await kernel.exec({
+      deckId: `${DECK}-rb`,
+      lang: 'ruby',
+      code: 'puts "hello from ruby"',
+    });
+    check(
+      'ruby stdout is captured',
+      (printed.entries || []).some((e) => e.level === 'log' && e.text.includes('hello from ruby')),
+      JSON.stringify(printed.entries),
+    );
+
+    const rbError = await kernel.exec({
+      deckId: `${DECK}-rb`,
+      lang: 'ruby',
+      code: 'raise "boom"',
+    });
+    check(
+      'ruby errors are reported, not fatal',
+      !rbError.ok && (rbError.entries || []).some((e) => e.level === 'error'),
+      JSON.stringify(rbError.entries),
+    );
+
+    const rbSurvives = await kernel.exec({ deckId: `${DECK}-rb`, lang: 'ruby', code: 'x + 1' });
+    check(
+      'ruby kernel survives an error',
+      lastReturn(rbSurvives) === '43',
+      JSON.stringify(rbSurvives.entries),
     );
   }
 } finally {

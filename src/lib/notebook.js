@@ -15,6 +15,29 @@ function titleOf(slideHtml) {
 }
 
 /**
+ * A standalone document holding exactly one slide and the deck's own <head>.
+ * Used to render a slide inline above its cells without the presentation
+ * runtime, so an inline cell in the thumbnail never executes twice.
+ */
+export function slideThumbDoc(html, slideId) {
+  if (!html) return '';
+  const slides = findSlides(html);
+  const slide = slides.find((s) => s.id === slideId);
+  if (!slide) return '';
+
+  const headMatch = html.match(/<head[^>]*>([\s\S]*?)<\/head>/i);
+  const head = headMatch ? headMatch[1] : '';
+  return [
+    '<!DOCTYPE html><html><head><meta charset="UTF-8">',
+    head,
+    '<style id="__nb_thumb">html,body{margin:0;overflow:hidden}</style>',
+    '</head><body><div id="deck">',
+    slide.html,
+    '</div></body></html>',
+  ].join('');
+}
+
+/**
  * The unifying model. A deck is a linear sequence of slides; a notebook is a
  * linear sequence of cells. Here a slide simply *owns* the cells that fall
  * inside its byte range, so both views read from one structure.
